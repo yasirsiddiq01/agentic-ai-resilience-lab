@@ -1,3 +1,14 @@
+---
+title: Agentic AI Resilience Lab
+emoji: 🛡️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+---
+
 # Agentic AI Resilience Lab
 
 **Failure Propagation, Observability, and Recovery for Multi-Agent Workflows**

@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "status": "frozen",
+  "workflow_id": "enterprise_incident_workflow_v1",
+  "description": "Fixed eight-stage synthetic workflow used by the Agentic AI Resilience Lab v1.0 simulation.",
+  "roles": [
+    {
+      "order": 1,
+      "id": "user_report",
+      "name": "User Report",
+      "handoff_to": "triage_agent"
+    },
+    {
+      "order": 2,
+      "id": "triage_agent",
+      "name": "Triage Agent",
+      "handoff_to": "log_analysis_agent"
+    },
+    {
+      "order": 3,
+      "id": "log_analysis_agent",
+      "name": "Log Analysis Agent",
+      "handoff_to": "knowledge_agent"
+    },
+    {
+      "order": 4,
+      "id": "knowledge_agent",
+      "name": "Knowledge Agent",
+      "handoff_to": "action_agent"
+    },
+    {
+      "order": 5,
+      "id": "action_agent",
+      "name": "Action Agent",
+      "handoff_to": "verification_agent"
+    },
+    {
+      "order": 6,
+      "id": "verification_agent",
+      "name": "Verification Agent",
+      "handoff_to": "safety_agent"
+    },
+    {
+      "order": 7,
+      "id": "safety_agent",
+      "name": "Safety Agent",
+      "handoff_to": "report_agent"
+    },
+    {
+      "order": 8,
+      "id": "report_agent",
+      "name": "Report Agent",
+      "handoff_to": null
+    }
+  ]
+}

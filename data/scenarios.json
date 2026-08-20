@@ -1,0 +1,192 @@
+{
+  "version": "1.0",
+  "status": "frozen",
+  "frozen_on": "2026-08-20",
+  "purpose": "Predefined v1.0 scenario expectations frozen before simulation-engine hardening.",
+  "metric_definitions": {
+    "fault_reaches": "Downstream workflow stages that receive fault-bearing context before containment or workflow completion.",
+    "blast_radius": "Count of downstream workflow stages in fault_reaches.",
+    "propagation_depth": "Maximum number of handoffs traversed by the fault from its source before containment or workflow completion."
+  },
+  "evidence_states": [
+    "SUPPORTED",
+    "MISSING",
+    "STALE",
+    "UNSUPPORTED",
+    "CONTAMINATED"
+  ],
+  "controls": [
+    "NONE",
+    "EVIDENCE_GATE",
+    "CASCADE_ISOLATION",
+    "SAFETY_GUARD",
+    "CASCADE_ISOLATION_WITH_ROLLBACK"
+  ],
+  "scenarios": [
+    {
+      "id": "S01",
+      "name": "Nominal workflow",
+      "fault_type": "NONE",
+      "fault_source": null,
+      "evidence_state": "SUPPORTED",
+      "selected_control": "NONE",
+      "description": "Clean baseline with supported evidence and no injected fault.",
+      "expected": {
+        "fault_reaches": [],
+        "blast_radius": 0,
+        "propagation_depth": 0,
+        "containment_point": null,
+        "control_response": "NONE",
+        "final_state": "COMPLETED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S02",
+      "name": "Missing evidence",
+      "fault_type": "MISSING_EVIDENCE",
+      "fault_source": "Log Analysis Agent",
+      "evidence_state": "MISSING",
+      "selected_control": "EVIDENCE_GATE",
+      "description": "Required log evidence is unavailable but downstream reasoning attempts to continue.",
+      "expected": {
+        "fault_reaches": [
+          "Knowledge Agent",
+          "Action Agent",
+          "Verification Agent"
+        ],
+        "blast_radius": 3,
+        "propagation_depth": 3,
+        "containment_point": "Verification Agent",
+        "control_response": "ESCALATE",
+        "final_state": "ESCALATED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S03",
+      "name": "Stale evidence",
+      "fault_type": "STALE_EVIDENCE",
+      "fault_source": "Knowledge Agent",
+      "evidence_state": "STALE",
+      "selected_control": "EVIDENCE_GATE",
+      "description": "Outdated knowledge or runbook context is introduced into the workflow.",
+      "expected": {
+        "fault_reaches": [
+          "Action Agent",
+          "Verification Agent"
+        ],
+        "blast_radius": 2,
+        "propagation_depth": 2,
+        "containment_point": "Verification Agent",
+        "control_response": "BLOCK",
+        "final_state": "BLOCKED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S04",
+      "name": "Unsupported root-cause propagation",
+      "fault_type": "UNSUPPORTED_ROOT_CAUSE",
+      "fault_source": "Knowledge Agent",
+      "evidence_state": "UNSUPPORTED",
+      "selected_control": "NONE",
+      "description": "An unsupported root-cause claim is allowed to propagate without a containment control.",
+      "expected": {
+        "fault_reaches": [
+          "Action Agent",
+          "Verification Agent",
+          "Safety Agent",
+          "Report Agent"
+        ],
+        "blast_radius": 4,
+        "propagation_depth": 4,
+        "containment_point": null,
+        "control_response": "NONE",
+        "final_state": "FAILED_UNCONTAINED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S05",
+      "name": "Instruction contamination containment",
+      "fault_type": "INSTRUCTION_CONTAMINATION",
+      "fault_source": "Triage Agent",
+      "evidence_state": "CONTAMINATED",
+      "selected_control": "CASCADE_ISOLATION",
+      "description": "Contaminated instructions are introduced during triage and isolated at the next workflow stage.",
+      "expected": {
+        "fault_reaches": [
+          "Log Analysis Agent"
+        ],
+        "blast_radius": 1,
+        "propagation_depth": 1,
+        "containment_point": "Log Analysis Agent",
+        "control_response": "ISOLATE",
+        "final_state": "CONTAINED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S06",
+      "name": "False verification",
+      "fault_type": "FALSE_VERIFICATION",
+      "fault_source": "Verification Agent",
+      "evidence_state": "UNSUPPORTED",
+      "selected_control": "SAFETY_GUARD",
+      "description": "Verification incorrectly reports success without the required supporting evidence.",
+      "expected": {
+        "fault_reaches": [
+          "Safety Agent"
+        ],
+        "blast_radius": 1,
+        "propagation_depth": 1,
+        "containment_point": "Safety Agent",
+        "control_response": "BLOCK",
+        "final_state": "BLOCKED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S07",
+      "name": "Over-permissioned action",
+      "fault_type": "OVER_PERMISSIONED_ACTION",
+      "fault_source": "Action Agent",
+      "evidence_state": "SUPPORTED",
+      "selected_control": "SAFETY_GUARD",
+      "description": "A proposed action exceeds the simulated authority available to the workflow.",
+      "expected": {
+        "fault_reaches": [
+          "Verification Agent",
+          "Safety Agent"
+        ],
+        "blast_radius": 2,
+        "propagation_depth": 2,
+        "containment_point": "Safety Agent",
+        "control_response": "REQUIRE_HUMAN_APPROVAL",
+        "final_state": "HUMAN_APPROVAL_REQUIRED",
+        "rollback_to": null
+      }
+    },
+    {
+      "id": "S08",
+      "name": "Containment and rollback recovery",
+      "fault_type": "CONTEXT_CONTAMINATION",
+      "fault_source": "Knowledge Agent",
+      "evidence_state": "CONTAMINATED",
+      "selected_control": "CASCADE_ISOLATION_WITH_ROLLBACK",
+      "description": "Contaminated context is isolated, the last trusted state is restored, and deterministic execution resumes with sanitised context.",
+      "expected": {
+        "fault_reaches": [
+          "Action Agent"
+        ],
+        "blast_radius": 1,
+        "propagation_depth": 1,
+        "containment_point": "Action Agent",
+        "control_response": "ROLLBACK_AND_REEXECUTE",
+        "final_state": "RECOVERED",
+        "rollback_to": "Log Analysis Agent"
+      }
+    }
+  ]
+}

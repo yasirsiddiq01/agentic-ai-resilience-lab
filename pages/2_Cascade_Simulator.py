@@ -1,11 +1,24 @@
 import html
 
-import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
+import streamlit.components.v1 as components
 
-from src.ui import apply_global_style, page_header, metric_card, section
+from src.engine import execute_scenario
+from src.scenarios import load_scenarios
+from src.ui import (
+    apply_global_style,
+    metric_card,
+    page_header,
+    section,
+)
+from src.ui_adapter import (
+    get_scenario_catalog,
+    get_trace_rows,
+    get_workflow_stages,
+)
+
 
 st.set_page_config(
     page_title="Cascade Simulator",
@@ -17,16 +30,31 @@ st.set_page_config(
 apply_global_style()
 
 
-AGENTS = [
-    "User Report",
-    "Triage Agent",
-    "Log Analysis Agent",
-    "Knowledge Agent",
-    "Action Agent",
-    "Verification Agent",
-    "Safety Agent",
-    "Report Agent",
-]
+# ---------------------------------------------------------------------
+# Canonical data
+# ---------------------------------------------------------------------
+
+AGENTS = list(get_workflow_stages())
+SCENARIOS = get_scenario_catalog()
+
+SPEC_REGISTRY = load_scenarios()
+
+SPEC_BY_ID = {
+    scenario["id"]: scenario
+    for scenario in SPEC_REGISTRY["scenarios"]
+}
+
+EDGES = list(
+    zip(
+        AGENTS,
+        AGENTS[1:],
+    )
+)
+
+
+# ---------------------------------------------------------------------
+# Presentation configuration
+# ---------------------------------------------------------------------
 
 SVG_POSITIONS = {
     "User Report": (80, 170),
@@ -39,240 +67,420 @@ SVG_POSITIONS = {
     "Report Agent": (825, 170),
 }
 
-EDGES = [
-    ("User Report", "Triage Agent"),
-    ("Triage Agent", "Log Analysis Agent"),
-    ("Log Analysis Agent", "Knowledge Agent"),
-    ("Knowledge Agent", "Action Agent"),
-    ("Action Agent", "Verification Agent"),
-    ("Verification Agent", "Safety Agent"),
-    ("Safety Agent", "Report Agent"),
-]
-
-SCENARIOS = {
-    "Hallucinated root cause": {
-        "seed_agent": "Knowledge Agent",
-        "fault": "Knowledge Agent invents database saturation without log evidence.",
-        "risk": [0.10, 0.16, 0.24, 0.82, 0.92, 0.88, 0.35, 0.20],
-    },
-    "Missing evidence": {
-        "seed_agent": "Log Analysis Agent",
-        "fault": "Log Analysis Agent fails to retrieve logs, but the workflow continues.",
-        "risk": [0.10, 0.18, 0.74, 0.68, 0.76, 0.70, 0.58, 0.42],
-    },
-    "Prompt injection attempt": {
-        "seed_agent": "Action Agent",
-        "fault": "Action Agent receives an unsafe instruction to ignore verification.",
-        "risk": [0.10, 0.14, 0.18, 0.22, 0.98, 0.96, 0.30, 0.16],
-    },
-    "False success declaration": {
-        "seed_agent": "Verification Agent",
-        "fault": "Verification Agent declares success without hard evidence.",
-        "risk": [0.10, 0.15, 0.22, 0.28, 0.40, 0.91, 0.74, 0.68],
-    },
-}
-
 
 STATUS_COLORS = {
     "pending": "#475569",
     "clean": "#38bdf8",
     "fault seed": "#ef4444",
     "contaminated": "#f97316",
-    "blocked": "#facc15",
+    "contained": "#facc15",
     "protected": "#22c55e",
+    "recovered": "#22c55e",
 }
 
 
-def simulate_cascade(scenario_name: str, control_mode: str):
-    scenario = SCENARIOS[scenario_name]
-    seed_agent = scenario["seed_agent"]
-    seed_index = AGENTS.index(seed_agent)
+# ---------------------------------------------------------------------
+# Canonical cascade view
+# ---------------------------------------------------------------------
 
-    if control_mode == "No control layer":
-        containment_index = None
-        control_summary = "No control layer is active, so risky context can propagate downstream."
-        final_decision = "Cascaded"
+def build_trace(
+    scenario: str,
+) -> pd.DataFrame:
+    """
+    Build presentation rows from the canonical execution trace.
 
-    elif control_mode == "EvidenceGate verification":
-        containment_index = AGENTS.index("Verification Agent")
-        control_summary = "EvidenceGate blocks unsupported or unverifiable action at the verification step."
-        final_decision = "Blocked"
+    This page does not simulate scenario behaviour itself.
+    """
 
-    else:
-        containment_index = min(seed_index + 1, AGENTS.index("Safety Agent"))
-        control_summary = "CASCADE isolation quarantines risky context close to the fault seed."
-        final_decision = "Contained"
+    scenario_id = SCENARIOS[
+        scenario
+    ]["scenario_id"]
 
-    rows = []
-
-    for idx, agent in enumerate(AGENTS):
-        base_risk = scenario["risk"][idx]
-
-        if idx < seed_index:
-            status = "clean"
-            trace_label = "normal"
-            event = "Normal workflow step before the fault seed."
-            risk_score = min(base_risk, 0.25)
-
-        elif idx == seed_index:
-            status = "fault seed"
-            trace_label = "fault_seed"
-            event = scenario["fault"]
-            risk_score = base_risk
-
-        else:
-            if control_mode == "No control layer":
-                status = "contaminated"
-                trace_label = "propagated"
-                event = "Risky context was reused by this downstream agent."
-                risk_score = max(base_risk, 0.72)
-
-            elif containment_index is not None and idx < containment_index:
-                status = "contaminated"
-                trace_label = "propagated"
-                event = "Risky context reached this agent before containment."
-                risk_score = base_risk
-
-            elif containment_index is not None and idx == containment_index:
-                status = "blocked"
-                trace_label = "contained"
-                event = "Control layer stopped the propagation path."
-                risk_score = base_risk
-
-            else:
-                status = "protected"
-                trace_label = "protected"
-                event = "Downstream agent protected after containment."
-                risk_score = min(base_risk, 0.30)
-
-        rows.append(
-            {
-                "step": idx + 1,
-                "agent": agent,
-                "scenario": scenario_name,
-                "control_mode": control_mode,
-                "event": event,
-                "trace_label": trace_label,
-                "risk_score": round(risk_score, 2),
-                "status": status,
-            }
+    return pd.DataFrame(
+        get_trace_rows(
+            scenario_id
         )
-
-    df = pd.DataFrame(rows)
-
-    contaminated_count = int((df["status"] == "contaminated").sum())
-    affected_count = int(df["status"].isin(["fault seed", "contaminated", "blocked"]).sum())
-
-    metrics = {
-        "fault_seed": seed_agent,
-        "fault": scenario["fault"],
-        "max_risk": round(df["risk_score"].max(), 2),
-        "blast_radius": contaminated_count,
-        "propagation_depth": max(0, affected_count - 1),
-        "containment_point": "None" if containment_index is None else AGENTS[containment_index],
-        "containment_step": None if containment_index is None else containment_index + 1,
-        "final_decision": final_decision,
-        "control_summary": control_summary,
-    }
-
-    return df, metrics
+    )
 
 
-def build_svg_path(stop_step: int):
-    selected_agents = AGENTS[:stop_step]
+def get_execution(
+    scenario: str,
+):
+    scenario_id = SCENARIOS[
+        scenario
+    ]["scenario_id"]
+
+    return execute_scenario(
+        scenario_id
+    )
+
+
+def get_spec(
+    scenario: str,
+) -> dict:
+    scenario_id = SCENARIOS[
+        scenario
+    ]["scenario_id"]
+
+    return SPEC_BY_ID[
+        scenario_id
+    ]
+
+
+def display_status_for_agent(
+    df: pd.DataFrame,
+    agent: str,
+) -> str:
+    """
+    Collapse potentially repeated canonical trace entries into one
+    visual status for the workflow topology.
+
+    Fault and contamination states take precedence so the original
+    propagation path remains visible even after rollback/re-execution.
+    """
+
+    rows = df.loc[
+        df["agent"] == agent
+    ]
+
+    if rows.empty:
+        return "pending"
+
+    statuses = set(
+        rows["status"].tolist()
+    )
+
+    if "fault seed" in statuses:
+        return "fault seed"
+
+    if "warning" in statuses:
+        return "contaminated"
+
+    if (
+        "blocked" in statuses
+        or "escalated" in statuses
+        or "contained" in statuses
+    ):
+        return "contained"
+
+    if "evidence" in statuses:
+        return "recovered"
+
+    if "normal" in statuses:
+        return "clean"
+
+    return "clean"
+
+
+def animation_stop_index(
+    scenario: str,
+) -> int:
+    """
+    Determine how far the replay runner travels.
+
+    Recovered scenarios complete their deterministic re-execution,
+    while terminal containment scenarios stop at the control point.
+    """
+
+    result = get_execution(
+        scenario
+    )
+
+    if result.final_state == "RECOVERED":
+        return len(AGENTS) - 1
+
+    if result.containment_point is None:
+        return len(AGENTS) - 1
+
+    return AGENTS.index(
+        result.containment_point
+    )
+
+
+# ---------------------------------------------------------------------
+# Workflow SVG
+# ---------------------------------------------------------------------
+
+def build_svg_path(
+    stop_index: int,
+) -> str:
+    selected_agents = AGENTS[
+        : stop_index + 1
+    ]
+
     commands = []
 
-    for idx, agent in enumerate(selected_agents):
-        x, y = SVG_POSITIONS[agent]
+    for index, agent in enumerate(
+        selected_agents
+    ):
+        x, y = SVG_POSITIONS[
+            agent
+        ]
 
-        if idx == 0:
-            commands.append(f"M {x} {y}")
+        if index == 0:
+            commands.append(
+                f"M {x} {y}"
+            )
+
         else:
-            commands.append(f"L {x} {y}")
+            commands.append(
+                f"L {x} {y}"
+            )
 
-    return " ".join(commands)
+    return " ".join(
+        commands
+    )
 
 
-def build_animated_cascade_html(df: pd.DataFrame, metrics: dict):
-    stop_step = metrics["containment_step"] or len(AGENTS)
-    motion_path = build_svg_path(stop_step)
-    duration = max(3.0, stop_step * 0.55)
+def build_cascade_replay_html(
+    df: pd.DataFrame,
+    scenario: str,
+    animate: bool,
+) -> str:
+    result = get_execution(
+        scenario
+    )
+
+    stop_index = animation_stop_index(
+        scenario
+    )
+
+    motion_path = build_svg_path(
+        stop_index
+    )
+
+    duration = max(
+        3.0,
+        (stop_index + 1) * 0.55,
+    )
 
     edge_lines = []
 
     for source, target in EDGES:
-        x1, y1 = SVG_POSITIONS[source]
-        x2, y2 = SVG_POSITIONS[target]
+        x1, y1 = SVG_POSITIONS[
+            source
+        ]
+
+        x2, y2 = SVG_POSITIONS[
+            target
+        ]
 
         edge_lines.append(
             f"""
-            <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"
-                  stroke="rgba(148,163,184,0.40)" stroke-width="3" />
+            <line
+                x1="{x1}"
+                y1="{y1}"
+                x2="{x2}"
+                y2="{y2}"
+                stroke="rgba(148,163,184,0.40)"
+                stroke-width="3"
+            />
             """
         )
 
     node_items = []
 
-    for idx, agent in enumerate(AGENTS):
-        x, y = SVG_POSITIONS[agent]
-        status = df.loc[df["agent"] == agent, "status"].iloc[0]
-        final_color = STATUS_COLORS[status]
+    for index, agent in enumerate(
+        AGENTS
+    ):
+        x, y = SVG_POSITIONS[
+            agent
+        ]
 
-        if idx + 1 <= stop_step:
-            begin_time = idx * 0.55
+        status = display_status_for_agent(
+            df,
+            agent,
+        )
+
+        final_color = STATUS_COLORS.get(
+            status,
+            "#94a3b8",
+        )
+
+        if index <= stop_index:
+            begin_time = (
+                index * 0.55
+            )
+
         else:
-            begin_time = duration + 0.25
+            begin_time = (
+                duration + 0.35
+            )
 
-        safe_agent = html.escape(agent)
-        safe_status = html.escape(status)
+        safe_agent = html.escape(
+            agent
+        )
+
+        safe_status = html.escape(
+            status
+        )
+
+        if animate:
+            circle = f"""
+                <circle
+                    cx="{x}"
+                    cy="{y}"
+                    r="19"
+                    fill="{STATUS_COLORS['pending']}"
+                    stroke="rgba(248,250,252,0.85)"
+                    stroke-width="3"
+                >
+                    <animate
+                        attributeName="fill"
+                        from="{STATUS_COLORS['pending']}"
+                        to="{final_color}"
+                        begin="{begin_time}s"
+                        dur="0.22s"
+                        fill="freeze"
+                    />
+                </circle>
+            """
+
+            pulse = f"""
+                <circle
+                    cx="{x}"
+                    cy="{y}"
+                    r="25"
+                    fill="none"
+                    stroke="{final_color}"
+                    stroke-width="2"
+                    opacity="0"
+                >
+                    <animate
+                        attributeName="opacity"
+                        values="0;0.85;0"
+                        begin="{begin_time}s"
+                        dur="0.65s"
+                        fill="freeze"
+                    />
+
+                    <animate
+                        attributeName="r"
+                        values="21;31;25"
+                        begin="{begin_time}s"
+                        dur="0.65s"
+                        fill="freeze"
+                    />
+                </circle>
+            """
+
+        else:
+            circle = f"""
+                <circle
+                    cx="{x}"
+                    cy="{y}"
+                    r="19"
+                    fill="{final_color}"
+                    stroke="rgba(248,250,252,0.85)"
+                    stroke-width="3"
+                />
+            """
+
+            pulse = ""
 
         node_items.append(
             f"""
             <g>
-                <circle cx="{x}" cy="{y}" r="19"
-                        fill="{STATUS_COLORS['pending']}"
-                        stroke="rgba(248,250,252,0.85)"
-                        stroke-width="3">
-                    <animate attributeName="fill"
-                             from="{STATUS_COLORS['pending']}"
-                             to="{final_color}"
-                             begin="{begin_time}s"
-                             dur="0.22s"
-                             fill="freeze" />
-                </circle>
+                {circle}
+                {pulse}
 
-                <circle cx="{x}" cy="{y}" r="25"
-                        fill="none"
-                        stroke="{final_color}"
-                        stroke-width="2"
-                        opacity="0">
-                    <animate attributeName="opacity"
-                             values="0;0.85;0"
-                             begin="{begin_time}s"
-                             dur="0.65s"
-                             fill="freeze" />
-                    <animate attributeName="r"
-                             values="21;31;25"
-                             begin="{begin_time}s"
-                             dur="0.65s"
-                             fill="freeze" />
-                </circle>
+                <text
+                    x="{x}"
+                    y="{y + 43}"
+                    text-anchor="middle"
+                    fill="#e5e7eb"
+                    font-size="13"
+                    font-weight="600"
+                >
+                    {safe_agent}
+                </text>
 
-                <text x="{x}" y="{y + 43}"
-                      text-anchor="middle"
-                      fill="#e5e7eb"
-                      font-size="13"
-                      font-weight="600">{safe_agent}</text>
-
-                <text x="{x}" y="{y + 60}"
-                      text-anchor="middle"
-                      fill="#94a3b8"
-                      font-size="11">{safe_status}</text>
+                <text
+                    x="{x}"
+                    y="{y + 60}"
+                    text-anchor="middle"
+                    fill="#94a3b8"
+                    font-size="11"
+                >
+                    {safe_status}
+                </text>
             </g>
             """
         )
 
-    html_code = f"""
+    if animate:
+        runner_path = f"""
+            <path
+                d="{motion_path}"
+                fill="none"
+                stroke="rgba(56,189,248,0.95)"
+                stroke-width="5"
+                stroke-linecap="round"
+                stroke-dasharray="1200"
+                stroke-dashoffset="1200"
+            >
+                <animate
+                    attributeName="stroke-dashoffset"
+                    from="1200"
+                    to="0"
+                    dur="{duration}s"
+                    fill="freeze"
+                />
+            </path>
+
+            <circle
+                r="10"
+                fill="#ffffff"
+                stroke="#38bdf8"
+                stroke-width="5"
+                class="runner"
+            >
+                <animateMotion
+                    dur="{duration}s"
+                    path="{motion_path}"
+                    fill="freeze"
+                    calcMode="linear"
+                />
+            </circle>
+        """
+
+    else:
+        stop_agent = AGENTS[
+            stop_index
+        ]
+
+        stop_x, stop_y = SVG_POSITIONS[
+            stop_agent
+        ]
+
+        runner_path = f"""
+            <path
+                d="{motion_path}"
+                fill="none"
+                stroke="rgba(56,189,248,0.95)"
+                stroke-width="5"
+                stroke-linecap="round"
+            />
+
+            <circle
+                cx="{stop_x}"
+                cy="{stop_y}"
+                r="10"
+                fill="#ffffff"
+                stroke="#38bdf8"
+                stroke-width="5"
+                class="runner"
+            />
+        """
+
+    containment = (
+        result.containment_point
+        if result.containment_point
+        is not None
+        else "None"
+    )
+
+    return f"""
     <html>
     <head>
         <style>
@@ -286,7 +494,9 @@ def build_animated_cascade_html(df: pd.DataFrame, metrics: dict):
                 width: 100%;
                 border-radius: 20px;
                 background: rgba(15, 23, 42, 0.55);
-                border: 1px solid rgba(148, 163, 184, 0.18);
+                border:
+                    1px solid
+                    rgba(148,163,184,0.18);
                 padding: 12px;
                 box-sizing: border-box;
             }}
@@ -310,53 +520,57 @@ def build_animated_cascade_html(df: pd.DataFrame, metrics: dict):
             }}
 
             .runner {{
-                filter: drop-shadow(0 0 8px rgba(56,189,248,0.85));
+                filter:
+                    drop-shadow(
+                        0 0 8px
+                        rgba(56,189,248,0.85)
+                    );
             }}
         </style>
     </head>
 
     <body>
         <div class="graph-card">
+
             <div class="title-row">
-                <div class="title">Live cascade replay</div>
-                <div class="status">Stops at: {html.escape(metrics["containment_point"])}</div>
+
+                <div class="title">
+                    Canonical cascade replay
+                </div>
+
+                <div class="status">
+                    Final state:
+                    {html.escape(result.final_state)}
+                    |
+                    Containment:
+                    {html.escape(containment)}
+                </div>
+
             </div>
 
-            <svg viewBox="0 0 900 330" width="100%" height="390">
+            <svg
+                viewBox="0 0 900 330"
+                width="100%"
+                height="390"
+            >
                 {"".join(edge_lines)}
-
-                <path d="{motion_path}"
-                      fill="none"
-                      stroke="rgba(56,189,248,0.95)"
-                      stroke-width="5"
-                      stroke-linecap="round"
-                      stroke-dasharray="1200"
-                      stroke-dashoffset="1200">
-                    <animate attributeName="stroke-dashoffset"
-                             from="1200"
-                             to="0"
-                             dur="{duration}s"
-                             fill="freeze" />
-                </path>
-
+                {runner_path}
                 {"".join(node_items)}
-
-                <circle r="10" fill="#ffffff" stroke="#38bdf8" stroke-width="5" class="runner">
-                    <animateMotion dur="{duration}s"
-                                   path="{motion_path}"
-                                   fill="freeze"
-                                   calcMode="linear" />
-                </circle>
             </svg>
+
         </div>
     </body>
     </html>
     """
 
-    return html_code
 
+# ---------------------------------------------------------------------
+# Presentation-only indicator chart
+# ---------------------------------------------------------------------
 
-def build_risk_chart(df: pd.DataFrame):
+def build_indicator_chart(
+    df: pd.DataFrame,
+) -> go.Figure:
     fig = go.Figure()
 
     fig.add_trace(
@@ -365,205 +579,489 @@ def build_risk_chart(df: pd.DataFrame):
             y=df["risk_score"],
             mode="lines+markers",
             text=df["agent"],
-            hovertemplate="Step %{x}<br>%{text}<br>Risk: %{y}<extra></extra>",
-            line=dict(width=3),
-            marker=dict(size=8),
+            hovertemplate=(
+                "<b>%{text}</b>"
+                "<br>Trace step %{x}"
+                "<br>UI indicator: %{y}"
+                "<extra></extra>"
+            ),
+            line=dict(
+                width=3,
+            ),
+            marker=dict(
+                size=9,
+            ),
         )
     )
 
     fig.update_layout(
         height=340,
-        margin=dict(l=20, r=20, t=30, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,0.55)",
-        font=dict(color="#e5e7eb"),
-        xaxis=dict(title="Workflow step", gridcolor="rgba(148,163,184,0.15)"),
-        yaxis=dict(title="Risk score", range=[0, 1], gridcolor="rgba(148,163,184,0.15)"),
+        margin=dict(
+            l=20,
+            r=20,
+            t=30,
+            b=20,
+        ),
+        paper_bgcolor=(
+            "rgba(0,0,0,0)"
+        ),
+        plot_bgcolor=(
+            "rgba(15,23,42,0.55)"
+        ),
+        font=dict(
+            color="#e5e7eb",
+        ),
+        xaxis=dict(
+            title="Canonical trace step",
+            gridcolor=(
+                "rgba(148,163,184,0.15)"
+            ),
+            dtick=1,
+        ),
+        yaxis=dict(
+            title=(
+                "UI heuristic indicator"
+            ),
+            range=[0, 1],
+            gridcolor=(
+                "rgba(148,163,184,0.15)"
+            ),
+        ),
     )
 
     return fig
 
 
-def compare_controls(scenario_name: str):
+# ---------------------------------------------------------------------
+# Canonical comparison
+# ---------------------------------------------------------------------
+
+def build_comparison_table() -> pd.DataFrame:
     rows = []
 
-    for control in [
-        "No control layer",
-        "EvidenceGate verification",
-        "CASCADE isolation",
-    ]:
-        df, metrics = simulate_cascade(scenario_name, control)
+    for display_name, metadata in SCENARIOS.items():
+        scenario_id = metadata[
+            "scenario_id"
+        ]
+
+        spec = SPEC_BY_ID[
+            scenario_id
+        ]
+
+        result = execute_scenario(
+            scenario_id
+        )
 
         rows.append(
             {
-                "scenario": scenario_name,
-                "control_mode": control,
-                "max_risk": metrics["max_risk"],
-                "blast_radius": metrics["blast_radius"],
-                "propagation_depth": metrics["propagation_depth"],
-                "containment_point": metrics["containment_point"],
-                "final_decision": metrics["final_decision"],
+                "scenario": display_name,
+                "fault_source": (
+                    spec["fault_source"]
+                    if spec["fault_source"]
+                    is not None
+                    else "None"
+                ),
+                "control": spec[
+                    "selected_control"
+                ],
+                "blast_radius": (
+                    result.blast_radius
+                ),
+                "propagation_depth": (
+                    result.propagation_depth
+                ),
+                "containment": (
+                    result.containment_point
+                    if result.containment_point
+                    is not None
+                    else "None"
+                ),
+                "control_response": (
+                    result.control_response
+                ),
+                "final_state": (
+                    result.final_state
+                ),
             }
         )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows
+    )
 
+
+# ---------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------
 
 page_header(
     "Cascade Simulator",
-    "A controlled experiment showing how one faulty agent output can spread across a multi-agent workflow, and how verification or isolation controls reduce the blast radius.",
+    (
+        "A visual analysis of deterministic failure propagation "
+        "in the frozen v1.0 workflow. Blast radius, propagation "
+        "depth, containment, and final state come directly from "
+        "the canonical execution engine."
+    ),
 )
 
-scenario_options = list(SCENARIOS.keys())
 
-control_options = [
-    "No control layer",
-    "EvidenceGate verification",
-    "CASCADE isolation",
-]
+scenario_options = list(
+    SCENARIOS.keys()
+)
 
-if "cascade_scenario" not in st.session_state:
-    st.session_state.cascade_scenario = "Hallucinated root cause"
 
-if "cascade_control" not in st.session_state:
-    st.session_state.cascade_control = "No control layer"
-
-left, right = st.columns([1, 1.7])
-
-with left:
-    st.markdown("### Simulation control")
-
-    selected_scenario = st.selectbox(
-        "Failure seed",
-        scenario_options,
-        index=scenario_options.index(st.session_state.cascade_scenario),
+if (
+    "cascade_scenario"
+    not in st.session_state
+    or
+    st.session_state.cascade_scenario
+    not in scenario_options
+):
+    st.session_state.cascade_scenario = (
+        scenario_options[0]
     )
 
-    selected_control = st.selectbox(
-        "Control strategy",
-        control_options,
-        index=control_options.index(st.session_state.cascade_control),
+
+if (
+    "cascade_animate_now"
+    not in st.session_state
+):
+    st.session_state.cascade_animate_now = (
+        False
     )
 
-    if st.button("Run cascade simulation", use_container_width=True):
-        st.session_state.cascade_scenario = selected_scenario
-        st.session_state.cascade_control = selected_control
-        st.rerun()
 
-scenario = st.session_state.cascade_scenario
-control = st.session_state.cascade_control
+left, right = st.columns(
+    [1, 1.7]
+)
 
-df, metrics = simulate_cascade(scenario, control)
 
 with left:
     st.markdown(
-        f"""
-        <div class="module-card">
-            <h3>Active experiment</h3>
-            <p><b>Scenario:</b> {scenario}</p>
-            <p><b>Fault seed:</b> {metrics["fault_seed"]}</p>
-            <p><b>Injected fault:</b> {metrics["fault"]}</p>
-            <span class="tag">cascade test</span>
-            <span class="tag">blast radius</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        "### Scenario control"
     )
 
+    selected_scenario = st.selectbox(
+        "Frozen v1.0 scenario",
+        scenario_options,
+        index=scenario_options.index(
+            st.session_state.cascade_scenario
+        ),
+    )
+
+    if st.button(
+        "Run cascade replay",
+        use_container_width=True,
+    ):
+        st.session_state.cascade_scenario = (
+            selected_scenario
+        )
+
+        st.session_state.cascade_animate_now = (
+            True
+        )
+
+        st.rerun()
+
+
+scenario = (
+    st.session_state.cascade_scenario
+)
+
+scenario_id = SCENARIOS[
+    scenario
+]["scenario_id"]
+
+spec = get_spec(
+    scenario
+)
+
+result = get_execution(
+    scenario
+)
+
+df = build_trace(
+    scenario
+)
+
+
+fault_source = (
+    spec["fault_source"]
+    if spec["fault_source"]
+    is not None
+    else "None"
+)
+
+containment = (
+    result.containment_point
+    if result.containment_point
+    is not None
+    else "None"
+)
+
+
+with left:
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            "### Active experiment"
+        )
+
+        st.markdown(
+            f"**Scenario:** {scenario}"
+        )
+
+        st.markdown(
+            f"**Fault source:** {fault_source}"
+        )
+
+        st.markdown(
+            (
+                "**Frozen control:** "
+                f"`{spec['selected_control']}`"
+            )
+        )
+
+        st.markdown(
+            (
+                "**Control response:** "
+                f"`{result.control_response}`"
+            )
+        )
+
+        st.markdown(
+            (
+                "**Final state:** "
+                f"`{result.final_state}`"
+            )
+        )
+
+        st.caption(
+            (
+                "Canonical v1.0 execution. "
+                "This page does not define "
+                "a separate simulation."
+            )
+        )
+
+
 with right:
-    st.markdown("### Animated cascade graph")
+    st.markdown(
+        "### Cascade replay"
+    )
+
     components.html(
-        build_animated_cascade_html(df, metrics),
+        build_cascade_replay_html(
+            df=df,
+            scenario=scenario,
+            animate=(
+                st.session_state.cascade_animate_now
+            ),
+        ),
         height=430,
         scrolling=False,
     )
 
-st.success(f"Active run: {scenario} with {control}. {metrics['control_summary']}")
+    st.markdown(
+        "### Propagation interpretation"
+    )
 
-m1, m2, m3, m4 = st.columns(4)
+    with st.container(
+        border=True
+    ):
+        st.write(
+            SCENARIOS[
+                scenario
+            ]["objective"]
+        )
+
+        st.markdown(
+            (
+                "**Fault reaches:** "
+                + (
+                    ", ".join(
+                        result.fault_reaches
+                    )
+                    if result.fault_reaches
+                    else "None"
+                )
+            )
+        )
+
+        st.markdown(
+            (
+                "**Containment point:** "
+                f"{containment}"
+            )
+        )
+
+        if result.rollback_to:
+            st.markdown(
+                (
+                    "**Rollback target:** "
+                    f"{result.rollback_to}"
+                )
+            )
+
+
+if (
+    st.session_state.cascade_animate_now
+):
+    st.session_state.cascade_animate_now = (
+        False
+    )
+
+
+st.success(
+    (
+        f"{scenario_id}: "
+        f"{result.final_state}. "
+        f"Blast radius: "
+        f"{result.blast_radius}. "
+        f"Propagation depth: "
+        f"{result.propagation_depth}."
+    )
+)
+
+
+# ---------------------------------------------------------------------
+# Canonical metrics
+# ---------------------------------------------------------------------
+
+m1, m2, m3, m4 = st.columns(
+    4
+)
+
 
 with m1:
-    metric_card("Fault seed", metrics["fault_seed"], "Initial source of risky context")
+    metric_card(
+        "Fault source",
+        fault_source,
+        "Frozen scenario specification",
+    )
+
 
 with m2:
-    metric_card("Blast radius", str(metrics["blast_radius"]), "Contaminated downstream agents")
+    metric_card(
+        "Blast radius",
+        str(
+            result.blast_radius
+        ),
+        "Canonical downstream reach",
+    )
+
 
 with m3:
-    metric_card("Containment point", metrics["containment_point"], "Where propagation stopped")
+    metric_card(
+        "Propagation depth",
+        str(
+            result.propagation_depth
+        ),
+        "Canonical propagation metric",
+    )
+
 
 with m4:
-    metric_card("Final decision", metrics["final_decision"], "Cascaded, blocked, or contained")
+    metric_card(
+        "Containment",
+        containment,
+        "Canonical control point",
+    )
+
+
+# ---------------------------------------------------------------------
+# Indicator chart
+# ---------------------------------------------------------------------
 
 st.divider()
 
+
 section(
-    "Risk trend",
-    "The graph shows whether risk spreads downstream or drops after containment.",
+    "Trace indicator",
+    (
+        "The line is a presentation-only heuristic mapped onto "
+        "canonical trace states. Blast radius and propagation "
+        "depth above are canonical engine metrics; this indicator "
+        "is not a calibrated probability or risk model."
+    ),
 )
+
 
 st.plotly_chart(
-    build_risk_chart(df),
+    build_indicator_chart(
+        df
+    ),
     use_container_width=True,
-    config={"displayModeBar": False},
+    config={
+        "displayModeBar": False,
+    },
 )
+
+
+# ---------------------------------------------------------------------
+# Canonical trace
+# ---------------------------------------------------------------------
 
 st.divider()
 
+
 section(
-    "Cascade trace",
-    "This table records the state of each agent during the cascade simulation.",
+    "Canonical propagation trace",
+    (
+        "Every row below originates from the deterministic v1.0 "
+        "execution trace. No page-local propagation decisions "
+        "are generated here."
+    ),
 )
+
 
 st.dataframe(
     df,
     use_container_width=True,
     hide_index=True,
-    height=330,
+    height=380,
 )
 
+
+# ---------------------------------------------------------------------
+# Scenario comparison
+# ---------------------------------------------------------------------
+
 st.divider()
+
 
 section(
-    "Control comparison",
-    "This table compares the effect of no control, verification, and isolation for the selected failure seed.",
+    "Frozen scenario comparison",
+    (
+        "Comparison of all eight v1.0 scenarios using the "
+        "authoritative engine outputs."
+    ),
 )
+
 
 st.dataframe(
-    compare_controls(scenario),
+    build_comparison_table(),
     use_container_width=True,
     hide_index=True,
-    height=180,
+    height=320,
 )
 
-st.divider()
 
-section("Legend")
-
-c1, c2, c3, c4, c5 = st.columns(5)
-
-with c1:
-    st.markdown('<span class="tag">Clean</span>', unsafe_allow_html=True)
-    st.caption("No risky context received")
-
-with c2:
-    st.markdown('<span class="danger-tag">Fault seed</span>', unsafe_allow_html=True)
-    st.caption("Initial source of failure")
-
-with c3:
-    st.markdown('<span class="warning-tag">Contaminated</span>', unsafe_allow_html=True)
-    st.caption("Risky context reused")
-
-with c4:
-    st.markdown('<span class="warning-tag">Blocked</span>', unsafe_allow_html=True)
-    st.caption("Control stopped propagation")
-
-with c5:
-    st.markdown('<span class="success-tag">Protected</span>', unsafe_allow_html=True)
-    st.caption("Downstream protected")
+# ---------------------------------------------------------------------
+# Interpretation
+# ---------------------------------------------------------------------
 
 st.divider()
+
 
 section(
     "Engineering interpretation",
-    "This module shows why multi-agent AI systems need explicit control layers. Without containment, one unsupported claim or unsafe instruction can move downstream and influence later agents. EvidenceGate blocks unsupported actions at verification time. CASCADE isolation reduces the blast radius by quarantining risky context closer to the source.",
+    (
+        "The Cascade Simulator is now a visual analysis layer. "
+        "Fault propagation, containment, recovery, blast radius, "
+        "and propagation depth are determined by src.engine and "
+        "the frozen scenario registry rather than by Streamlit "
+        "page logic."
+    ),
 )

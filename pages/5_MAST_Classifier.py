@@ -193,7 +193,7 @@ def build_trace(scenario: str) -> pd.DataFrame:
             "event",
             "evidence_source",
             "trace_label",
-            "risk_score",
+            "trace_indicator",
             "status",
         ],
     )
@@ -204,7 +204,7 @@ def classify_row(row: pd.Series):
     evidence = str(row["evidence_source"]).lower()
     trace_label = str(row["trace_label"]).lower()
     status = str(row["status"]).lower()
-    risk = float(row["risk_score"])
+    risk = float(row["trace_indicator"])
 
     if "injected instruction" in evidence or "ignore verification" in event:
         return "Instruction contamination", 0.96, "Critical", TAXONOMY["Instruction contamination"]["recommended_control"]
@@ -243,14 +243,14 @@ def classify_trace(df: pd.DataFrame, sensitivity: str) -> pd.DataFrame:
         category, confidence, severity, control = classify_row(row)
 
         if sensitivity == "Strict":
-            if row["risk_score"] >= 0.50 and category == "No failure":
+            if row["trace_indicator"] >= 0.50 and category == "No failure":
                 category = "Propagation effect"
                 confidence = 0.70
                 severity = "Medium"
                 control = TAXONOMY["Propagation effect"]["recommended_control"]
 
         elif sensitivity == "High recall":
-            if row["risk_score"] >= 0.35 and category == "No failure":
+            if row["trace_indicator"] >= 0.35 and category == "No failure":
                 category = "Propagation effect"
                 confidence = 0.68
                 severity = "Medium"
@@ -261,11 +261,11 @@ def classify_trace(df: pd.DataFrame, sensitivity: str) -> pd.DataFrame:
                 "step": row["step"],
                 "agent": row["agent"],
                 "event": row["event"],
-                "risk_score": row["risk_score"],
+                "trace_indicator": row["trace_indicator"],
                 "status": row["status"],
                 "failure_category": category,
                 "severity": severity,
-                "classifier_confidence": round(confidence, 2),
+                "rule_score": round(confidence, 2),
                 "recommended_control": control,
             }
         )
@@ -290,7 +290,7 @@ def get_primary_failure(classified_df: pd.DataFrame) -> str:
     non_clean["severity_rank"] = non_clean["severity"].map(severity_rank)
 
     top = non_clean.sort_values(
-        by=["severity_rank", "classifier_confidence", "risk_score"],
+        by=["severity_rank", "rule_score", "trace_indicator"],
         ascending=False,
     ).iloc[0]
 
@@ -571,7 +571,7 @@ def build_taxonomy_table() -> pd.DataFrame:
 
 page_header(
     "MAST Classifier",
-    "A practical multi-agent safety taxonomy classifier. This module converts raw execution traces into structured failure categories, severity levels, and recommended controls.",
+    "A project-local deterministic rule-based failure taxonomy demonstrator. It classifies illustrative synthetic traces; it is not a trained model and its rule scores are not calibrated probabilities.",
 )
 
 scenario_options = list(SCENARIOS.keys())
@@ -589,7 +589,7 @@ if "mast_animate_now" not in st.session_state:
 left, right = st.columns([1, 1.7])
 
 with left:
-    st.markdown("### Classifier controls")
+    st.markdown("### Rule controls")
 
     selected_scenario = st.selectbox(
         "Select trace scenario",
@@ -598,7 +598,7 @@ with left:
     )
 
     selected_sensitivity = st.selectbox(
-        "Classifier sensitivity",
+        "Rule sensitivity",
         sensitivity_options,
         index=sensitivity_options.index(st.session_state.mast_sensitivity),
     )
@@ -619,7 +619,7 @@ primary_failure = get_primary_failure(classified_df)
 critical_count = int((classified_df["severity"] == "Critical").sum())
 high_count = int((classified_df["severity"] == "High").sum())
 classified_failures = int((classified_df["failure_category"] != "No failure").sum())
-avg_confidence = round(classified_df["classifier_confidence"].mean(), 2)
+avg_rule_score = round(classified_df["rule_score"].mean(), 2)
 
 with left:
     st.markdown(
@@ -649,13 +649,13 @@ with right:
         scrolling=False,
     )
 
-    st.markdown("### Classifier result")
+    st.markdown("### Rule-based result")
     st.markdown(
         f"""
         <div class="module-card">
             <h3>{primary_failure}</h3>
             <p>
-            The classifier scans each trace step for evidence quality, unsafe instructions, unsupported claims,
+            The deterministic rules inspect each illustrative trace step for evidence quality, unsafe instructions, unsupported claims,
             verification failures, premature actions, propagation effects, and permission violations.
             </p>
             <p><b>Primary recommended control:</b> {TAXONOMY[primary_failure]["recommended_control"]}</p>
@@ -675,7 +675,7 @@ st.success(f"Active run: {scenario}. Primary failure category: {primary_failure}
 m1, m2, m3, m4 = st.columns(4)
 
 with m1:
-    metric_card("Primary failure", primary_failure, "Highest-priority detected category")
+    metric_card("Primary failure", primary_failure, "Highest-priority rule label")
 
 with m2:
     metric_card("Classified failures", str(classified_failures), "Steps not labelled as clean")
@@ -684,7 +684,7 @@ with m3:
     metric_card("Critical/High steps", f"{critical_count}/{high_count}", "Critical and high severity counts")
 
 with m4:
-    metric_card("Avg confidence", str(avg_confidence), "Mean classifier confidence")
+    metric_card("Avg rule score", str(avg_rule_score), "Deterministic heuristic; not confidence")
 
 st.divider()
 
@@ -716,7 +716,7 @@ st.divider()
 
 section(
     "Classified trace",
-    "Each row shows the original agent event plus the classifier category, severity, confidence, and recommended control.",
+    "Each row shows the illustrative synthetic event plus the rule-assigned category, severity, heuristic rule score, and recommended control.",
 )
 
 st.dataframe(
@@ -730,7 +730,7 @@ st.divider()
 
 section(
     "Original trace",
-    "Raw trace used by the classifier before taxonomy labels are applied.",
+    "Illustrative synthetic trace used by the deterministic rules before taxonomy labels are applied.",
 )
 
 st.dataframe(
@@ -744,7 +744,7 @@ st.divider()
 
 section(
     "Taxonomy reference",
-    "The classifier uses this practical taxonomy to convert unstructured agent behaviour into auditable failure labels.",
+    "This project-local taxonomy maps illustrative synthetic events to deterministic failure labels and suggested controls.",
 )
 
 st.dataframe(
@@ -758,5 +758,17 @@ st.divider()
 
 section(
     "Engineering interpretation",
-    "The MAST Classifier gives the lab a diagnostic layer. Instead of only showing that a workflow failed, it labels what kind of failure occurred, where it appeared, how severe it was, and which control should be applied.",
+    "The MAST view is a rule-based diagnostic demonstrator. It assigns predefined labels, severity categories, heuristic rule scores, and suggested controls to illustrative synthetic traces. It is not a trained classifier or empirical validation of the taxonomy.",
+)
+
+st.divider()
+
+section(
+    "Claim boundary",
+    (
+        "MAST is a project-local label for this deterministic "
+        "rule-based taxonomy demonstrator. It is not presented "
+        "as an external standard, validated safety taxonomy, "
+        "trained machine-learning model, or calibrated classifier."
+    ),
 )

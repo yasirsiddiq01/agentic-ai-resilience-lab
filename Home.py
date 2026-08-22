@@ -1,5 +1,14 @@
 import streamlit as st
-from src.ui import apply_global_style, page_header, module_card, metric_card, section, render_agent_flow_animation
+
+from src.ui import (
+    apply_global_style,
+    metric_card,
+    module_card,
+    page_header,
+    render_agent_flow_animation,
+    section,
+)
+
 
 st.set_page_config(
     page_title="Agentic AI Resilience Lab",
@@ -9,100 +18,348 @@ st.set_page_config(
 
 apply_global_style()
 
+
+# ---------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------
+
 page_header(
     "Agentic AI Resilience Lab",
-    "Failure propagation, observability, and recovery for multi-agent AI workflows. "
-    "This project demonstrates how small reasoning, context, or verification errors can cascade across agents, "
-    "and how engineering controls can reduce operational risk."
+    (
+        "Failure propagation, observability, containment, and "
+        "recovery in a bounded deterministic multi-stage workflow."
+    ),
 )
+
+
 render_agent_flow_animation(
-    title="Agentic AI workflow",
-    subtitle="End-to-end multi-agent incident workflow",
+    title="Frozen v1.0 workflow",
+    subtitle="Eight deterministic workflow stages",
     stop_agent="Report Agent",
 )
 
+
+# ---------------------------------------------------------------------
+# Project status
+# ---------------------------------------------------------------------
+
 col1, col2, col3, col4 = st.columns(4)
 
+
 with col1:
-    metric_card("System focus", "Multi-agent AI", "Enterprise workflow reliability")
+    metric_card(
+        "v1.0 model",
+        "Deterministic",
+        "Simulation-based execution",
+    )
+
 
 with col2:
-    metric_card("Core risk", "Cascade failure", "One bad output can spread")
+    metric_card(
+        "Scenario suite",
+        "S01–S08",
+        "Eight frozen scenarios",
+    )
+
 
 with col3:
-    metric_card("Control layer", "EvidenceGate", "Verify before action")
+    metric_card(
+        "Control focus",
+        "Evidence + authority",
+        "Containment and escalation",
+    )
+
 
 with col4:
-    metric_card("Demo mode", "Streamlit", "Interactive engineering lab")
+    metric_card(
+        "Verification",
+        "Reproducible",
+        "pytest + evaluation + CI",
+    )
+
+
+# ---------------------------------------------------------------------
+# Purpose
+# ---------------------------------------------------------------------
 
 section(
     "Why this lab exists",
-    "Agentic systems are not only chatbots. In enterprise settings, agents may classify incidents, retrieve logs, "
-    "call tools, recommend actions, and produce reports. The risk is that one weak step can contaminate later steps. "
-    "This lab treats multi-agent AI as an engineering system that needs tracing, evidence checks, permissions, and recovery."
+    (
+        "A failure in a multi-stage AI workflow can become more "
+        "important when a downstream stage reuses an unsupported, "
+        "stale, unsafe, or contaminated output as trusted context. "
+        "This lab provides a controlled environment for examining "
+        "that propagation process and the effect of explicit "
+        "engineering controls."
+    ),
 )
+
+
+st.info(
+    (
+        "v1.0 models eight named workflow roles as deterministic "
+        "stages. They are not eight independently executing live "
+        "LLM agents."
+    )
+)
+
+
+# ---------------------------------------------------------------------
+# Main modules
+# ---------------------------------------------------------------------
 
 st.divider()
 
-section("Main modules")
+section(
+    "Main modules",
+    (
+        "The primary workflow, cascade, tracing, and isolation "
+        "views consume the canonical v1.0 execution engine."
+    ),
+)
+
 
 c1, c2, c3 = st.columns(3)
+
 
 with c1:
     module_card(
         "1. Enterprise Incident Workflow",
-        "A realistic IT outage workflow showing how triage, log analysis, knowledge retrieval, action recommendation, "
-        "verification, safety control, and reporting work together.",
-        ["IT operations", "agent workflow", "industrial scenario"],
+        (
+            "End-to-end inspection of the frozen S01–S08 scenarios, "
+            "including evidence state, containment, final state, "
+            "execution trace, and cross-scenario comparison."
+        ),
+        [
+            "canonical engine",
+            "workflow trace",
+            "scenario evaluation",
+        ],
     )
+
 
 with c2:
     module_card(
         "2. Cascade Simulator",
-        "Simulates how a wrong assumption, hallucinated claim, missing evidence, or injected instruction can spread "
-        "from one agent to the next.",
-        ["blast radius", "propagation depth", "failure path"],
+        (
+            "Visualises canonical fault propagation, blast radius, "
+            "propagation depth, containment point, and final state."
+        ),
+        [
+            "blast radius",
+            "propagation depth",
+            "containment",
+        ],
     )
+
 
 with c3:
     module_card(
         "3. AgentWatch Tracing",
-        "Captures step-level traces, agent handoffs, evidence status, risk scores, and root-cause indicators.",
-        ["observability", "trace logs", "root cause"],
+        (
+            "Inspects canonical TraceRecord events, including "
+            "handoffs, evidence state, context state, failure labels, "
+            "control responses, restoration, and re-execution."
+        ),
+        [
+            "synthetic tracing",
+            "provenance",
+            "recovery events",
+        ],
     )
 
+
 c4, c5, c6 = st.columns(3)
+
 
 with c4:
     module_card(
         "4. Chaos Dashboard",
-        "Injects controlled failures into the workflow and measures detection, containment, and recovery behaviour.",
-        ["chaos testing", "recovery", "metrics"],
+        (
+            "Exploratory synthetic fault-control analysis separate "
+            "from the frozen S01–S08 evaluator. Its 0–1 indicators "
+            "are presentation heuristics, not calibrated risk."
+        ),
+        [
+            "exploratory view",
+            "fault conditions",
+            "heuristic indicators",
+        ],
     )
+
 
 with c5:
     module_card(
         "5. MAST Classifier",
-        "Classifies multi-agent failures into practical categories such as incorrect verification, task derailment, "
-        "unsafe delegation, and premature closure.",
-        ["taxonomy", "classification", "failure analysis"],
+        (
+            "Project-local deterministic rule-based taxonomy "
+            "demonstrator for illustrative synthetic traces. "
+            "It is not a trained or calibrated classifier."
+        ),
+        [
+            "rule based",
+            "failure taxonomy",
+            "diagnostic view",
+        ],
     )
+
 
 with c6:
     module_card(
         "6. CASCADE Isolation",
-        "Quarantines risky outputs, blocks unsupported claims, and prevents contaminated context from spreading downstream.",
-        ["isolation", "containment", "safety gate"],
+        (
+            "Inspects canonical S05 isolation and S08 trusted-state "
+            "rollback behaviour, including isolation, restoration, "
+            "and deterministic re-execution events."
+        ),
+        [
+            "context isolation",
+            "trusted-state rollback",
+            "re-execution",
+        ],
     )
+
+
+# ---------------------------------------------------------------------
+# Reproducible evidence
+# ---------------------------------------------------------------------
 
 st.divider()
 
 section(
-    "How to use the demo",
-    "Start with the Enterprise Incident Workflow page. Run the normal workflow first, then inject a failure. "
-    "After that, use the module pages to inspect propagation, tracing, classification, and containment."
+    "Reproducible v1.0 evidence",
+    (
+        "The hardened repository includes automated tests, a frozen "
+        "scenario evaluator, committed evaluation artifacts, and "
+        "GitHub Actions verification."
+    ),
 )
 
-st.info(
-    "This is an applied portfolio project for AI engineering, agentic AI reliability, observability, and safety-oriented system design."
+
+e1, e2 = st.columns(2)
+
+
+with e1:
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            "### Automated verification"
+        )
+
+        st.code(
+            "python -m pytest -q",
+            language="bash",
+        )
+
+        st.write(
+            (
+                "The test suite verifies specifications, controls, "
+                "execution, isolation, recovery, evaluation, and "
+                "canonical UI integration."
+            )
+        )
+
+
+with e2:
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            "### Frozen evaluation"
+        )
+
+        st.code(
+            "python -m src.evaluate",
+            language="bash",
+        )
+
+        st.write(
+            (
+                "The evaluator compares actual engine behaviour "
+                "against the predefined S01–S08 expectations and "
+                "writes versioned evidence under results/v1.0/."
+            )
+        )
+
+
+# ---------------------------------------------------------------------
+# Suggested review path
+# ---------------------------------------------------------------------
+
+st.divider()
+
+section(
+    "Suggested review path",
+    (
+        "For a concise technical review, start with the Enterprise "
+        "Incident Workflow, then inspect propagation in Cascade, "
+        "trace history in AgentWatch, and recovery in CASCADE "
+        "Isolation."
+    ),
+)
+
+
+review_path = [
+    (
+        "1",
+        "Enterprise Incident Workflow",
+        "Compare the eight frozen scenario outcomes.",
+    ),
+    (
+        "2",
+        "Cascade Simulator",
+        "Inspect S04 uncontained propagation and S05 containment.",
+    ),
+    (
+        "3",
+        "AgentWatch Tracing",
+        "Inspect S08 restoration and re-execution events.",
+    ),
+    (
+        "4",
+        "CASCADE Isolation",
+        "Inspect S05 isolation and S08 rollback recovery.",
+    ),
+]
+
+
+for number, title, description in review_path:
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            f"**{number}. {title}**"
+        )
+
+        st.write(
+            description
+        )
+
+
+# ---------------------------------------------------------------------
+# Claim boundary
+# ---------------------------------------------------------------------
+
+st.divider()
+
+section(
+    "v1.0 claim boundary",
+    (
+        "Agentic AI Resilience Lab is a bounded simulation-based "
+        "demonstrator. It evaluates predefined multi-stage "
+        "failure-propagation scenarios and demonstrates traceability, "
+        "evidence checking, containment, and recovery behaviour under "
+        "reproducible test conditions."
+    ),
+)
+
+
+st.warning(
+    (
+        "v1.0 does not demonstrate production multi-agent safety, "
+        "live-agent telemetry, real attack prevention, regulatory "
+        "compliance, production infrastructure resilience, or "
+        "independently executing autonomous agents."
+    )
 )

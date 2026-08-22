@@ -1,0 +1,46 @@
+name: v1.0 Verification
+
+on:
+  push:
+    branches:
+      - main
+      - v1.0-hardening
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-v1:
+    name: Test and evaluate v1.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run automated tests
+        run: python -m pytest -q
+
+      - name: Run frozen scenario evaluation
+        run: python -m src.evaluate
+
+      - name: Verify committed evaluation evidence
+        run: git diff --exit-code -- results/v1.0

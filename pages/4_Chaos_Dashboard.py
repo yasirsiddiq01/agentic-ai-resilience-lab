@@ -55,7 +55,7 @@ STATUS_COLORS = {
     "fault injected": "#ef4444",
     "propagated": "#f97316",
     "contained": "#facc15",
-    "recovered": "#22c55e",
+    "protected": "#22c55e",
 }
 
 
@@ -64,37 +64,37 @@ FAULTS = {
         "seed_agent": "None",
         "description": "Baseline workflow with no injected fault.",
         "failure_mode": "None",
-        "base_risk": [0.08, 0.12, 0.16, 0.18, 0.22, 0.10, 0.07, 0.05],
+        "base_indicator": [0.08, 0.12, 0.16, 0.18, 0.22, 0.10, 0.07, 0.05],
     },
     "Stale retrieval": {
         "seed_agent": "Knowledge Agent",
         "description": "Knowledge Agent retrieves an outdated runbook and passes it to the Action Agent.",
         "failure_mode": "Outdated context reuse",
-        "base_risk": [0.10, 0.14, 0.22, 0.68, 0.82, 0.76, 0.42, 0.28],
+        "base_indicator": [0.10, 0.14, 0.22, 0.68, 0.82, 0.76, 0.42, 0.28],
     },
     "Missing logs": {
         "seed_agent": "Log Analysis Agent",
         "description": "Log Analysis Agent cannot retrieve logs, but the workflow continues with weak evidence.",
         "failure_mode": "Missing evidence",
-        "base_risk": [0.10, 0.18, 0.74, 0.66, 0.78, 0.70, 0.50, 0.36],
+        "base_indicator": [0.10, 0.18, 0.74, 0.66, 0.78, 0.70, 0.50, 0.36],
     },
     "Prompt injection": {
         "seed_agent": "Action Agent",
         "description": "Action Agent receives an unsafe instruction to ignore verification and close the incident.",
         "failure_mode": "Instruction contamination",
-        "base_risk": [0.10, 0.14, 0.18, 0.22, 0.96, 0.94, 0.38, 0.22],
+        "base_indicator": [0.10, 0.14, 0.18, 0.22, 0.96, 0.94, 0.38, 0.22],
     },
     "False verification": {
         "seed_agent": "Verification Agent",
         "description": "Verification Agent declares success without hard tool evidence.",
         "failure_mode": "Incorrect verification",
-        "base_risk": [0.10, 0.15, 0.20, 0.28, 0.44, 0.90, 0.78, 0.64],
+        "base_indicator": [0.10, 0.15, 0.20, 0.28, 0.44, 0.90, 0.78, 0.64],
     },
     "Over-permissioned action": {
         "seed_agent": "Action Agent",
         "description": "Action Agent attempts a remediation action outside its allowed permission scope.",
         "failure_mode": "Unsafe delegation / permission breach",
-        "base_risk": [0.10, 0.16, 0.22, 0.30, 0.88, 0.84, 0.72, 0.46],
+        "base_indicator": [0.10, 0.16, 0.22, 0.30, 0.88, 0.84, 0.72, 0.46],
     },
 }
 
@@ -162,7 +162,7 @@ def run_chaos_experiment(fault_name: str, recovery_mode: str, intensity: str):
     rows = []
 
     for idx, agent in enumerate(AGENTS):
-        risk = clamp(fault["base_risk"][idx] * factor)
+        risk = clamp(fault["base_indicator"][idx] * factor)
 
         if seed_index is None:
             status = "clean"
@@ -196,9 +196,9 @@ def run_chaos_experiment(fault_name: str, recovery_mode: str, intensity: str):
                 action = "block"
 
             else:
-                status = "recovered"
+                status = "protected"
                 event = "Downstream step protected after containment."
-                action = "recover"
+                action = "protect"
                 risk = min(risk, 0.30)
 
         rows.append(
@@ -209,7 +209,7 @@ def run_chaos_experiment(fault_name: str, recovery_mode: str, intensity: str):
                 "recovery_mode": recovery_mode,
                 "event": event,
                 "failure_mode": fault["failure_mode"],
-                "risk_score": round(risk, 2),
+                "ui_indicator": round(risk, 2),
                 "status": status,
                 "action": action,
             }
@@ -223,13 +223,12 @@ def run_chaos_experiment(fault_name: str, recovery_mode: str, intensity: str):
             "detection_step": "None",
             "containment_step": "Not required",
             "containment_index": len(AGENTS) - 1,
-            "recovery_result": "Clean baseline",
-            "recovery_rate": 100,
+            "recovery_result": "Baseline",
             "containment_quality": "Healthy",
             "blast_radius": 0,
             "affected_steps": 0,
             "steps_to_containment": 0,
-            "max_risk": round(df["risk_score"].max(), 2),
+            "max_indicator": round(df["ui_indicator"].max(), 2),
             "recovery_description": RECOVERY_MODES[recovery_mode]["description"],
         }
         return df, metrics
@@ -237,16 +236,14 @@ def run_chaos_experiment(fault_name: str, recovery_mode: str, intensity: str):
     if containment_index is None:
         containment_step = "None"
         containment_for_animation = len(AGENTS) - 1
-        recovery_result = "Failed"
+        recovery_result = "Uncontrolled"
         containment_quality = "Uncontrolled"
-        recovery_rate = 0
         steps_to_containment = len(AGENTS) - seed_index
     else:
         containment_step = AGENTS[containment_index]
         containment_for_animation = containment_index
-        recovery_result = "Recovered"
+        recovery_result = "Contained"
         containment_quality = "Controlled"
-        recovery_rate = 100
         steps_to_containment = containment_index - seed_index
 
     metrics = {
@@ -255,12 +252,11 @@ def run_chaos_experiment(fault_name: str, recovery_mode: str, intensity: str):
         "containment_step": containment_step,
         "containment_index": containment_for_animation,
         "recovery_result": recovery_result,
-        "recovery_rate": recovery_rate,
         "containment_quality": containment_quality,
         "blast_radius": int((df["status"] == "propagated").sum()),
         "affected_steps": int(df["status"].isin(["fault injected", "propagated", "contained"]).sum()),
         "steps_to_containment": steps_to_containment,
-        "max_risk": round(df["risk_score"].max(), 2),
+        "max_indicator": round(df["ui_indicator"].max(), 2),
         "recovery_description": RECOVERY_MODES[recovery_mode]["description"],
     }
 
@@ -472,13 +468,13 @@ def build_risk_chart(df: pd.DataFrame):
     fig.add_trace(
         go.Scatter(
             x=df["step"],
-            y=df["risk_score"],
+            y=df["ui_indicator"],
             mode="lines+markers+text",
             text=df["agent"],
             textposition="top center",
             line=dict(width=3),
             marker=dict(size=9),
-            hovertemplate="<b>%{text}</b><br>Step %{x}<br>Risk: %{y}<extra></extra>",
+            hovertemplate="<b>%{text}</b><br>Step %{x}<br>UI indicator: %{y}<extra></extra>",
         )
     )
 
@@ -489,7 +485,7 @@ def build_risk_chart(df: pd.DataFrame):
         plot_bgcolor="rgba(15,23,42,0.55)",
         font=dict(color="#e5e7eb"),
         xaxis=dict(title="Workflow step", gridcolor="rgba(148,163,184,0.15)", dtick=1),
-        yaxis=dict(title="Risk score", range=[0, 1], gridcolor="rgba(148,163,184,0.15)"),
+        yaxis=dict(title="UI heuristic indicator", range=[0, 1], gridcolor="rgba(148,163,184,0.15)"),
     )
 
     return fig
@@ -533,7 +529,7 @@ def build_experiment_matrix(fault_name: str, intensity: str):
             {
                 "fault": fault_name,
                 "recovery_mode": recovery_mode,
-                "max_risk": metrics["max_risk"],
+                "max_indicator": metrics["max_indicator"],
                 "blast_radius": metrics["blast_radius"],
                 "containment_step": metrics["containment_step"],
                 "recovery_result": metrics["recovery_result"],
@@ -546,7 +542,7 @@ def build_experiment_matrix(fault_name: str, intensity: str):
 
 page_header(
     "Chaos Dashboard",
-    "Controlled fault injection for multi-agent workflows. This module tests whether the system detects, contains, and recovers from injected failures.",
+    "Exploratory synthetic fault-control analysis. This view is separate from the frozen S01-S08 v1.0 evaluator and does not establish real-world resilience.",
 )
 
 fault_options = list(FAULTS.keys())
@@ -577,7 +573,7 @@ with left:
     )
 
     selected_recovery = st.selectbox(
-        "Recovery strategy",
+        "Exploratory control strategy",
         recovery_options,
         index=recovery_options.index(st.session_state.chaos_recovery),
     )
@@ -662,12 +658,12 @@ with m3:
     metric_card("Blast radius", str(metrics["blast_radius"]), "Steps affected before containment")
 
 with m4:
-    metric_card("Recovery result", metrics["recovery_result"], metrics["containment_quality"])
+    metric_card("Control outcome", metrics["recovery_result"], "Single deterministic run")
 
 m5, m6, m7, m8 = st.columns(4)
 
 with m5:
-    metric_card("Max risk", str(metrics["max_risk"]), "Highest risk reached")
+    metric_card("Max indicator", str(metrics["max_indicator"]), "Presentation-only heuristic")
 
 with m6:
     metric_card("Affected steps", str(metrics["affected_steps"]), "Fault, propagation, and containment steps")
@@ -676,7 +672,7 @@ with m7:
     metric_card("Steps to containment", str(metrics["steps_to_containment"]), "Lower is better")
 
 with m8:
-    metric_card("Recovery rate", f"{metrics['recovery_rate']}%", "Recovered or uncontrolled")
+    metric_card("Control status", metrics["containment_quality"], "Not a statistical recovery rate")
 
 st.divider()
 
@@ -684,8 +680,8 @@ chart_col, bar_col = st.columns([1.3, 1])
 
 with chart_col:
     section(
-        "Risk over workflow",
-        "This chart shows how risk rises after fault injection and whether it drops after recovery.",
+        "Heuristic indicator over workflow",
+        "This presentation-only heuristic visualises the selected synthetic fault/control combination; it is not a calibrated risk estimate.",
     )
     st.plotly_chart(
         build_risk_chart(df),
@@ -721,8 +717,8 @@ st.dataframe(
 st.divider()
 
 section(
-    "Recovery strategy comparison",
-    "This table compares recovery controls for the selected fault and intensity.",
+    "Exploratory control comparison",
+    "This table compares synthetic outcomes for the selected fault, intensity, and exploratory control choices.",
 )
 
 st.dataframe(
@@ -736,5 +732,5 @@ st.divider()
 
 section(
     "Engineering interpretation",
-    "The Chaos Dashboard tests whether the agent workflow behaves safely under controlled failure. A serious agentic AI system should expose failure signals, reduce blast radius, block unsupported actions, and recover or escalate when confidence and evidence are insufficient.",
+    "The Chaos Dashboard is an exploratory synthetic analysis view. It compares predefined fault/control combinations and presentation heuristics; it is not part of the frozen S01-S08 evaluation and does not demonstrate production resilience, attack resistance, or measured recovery rates.",
 )

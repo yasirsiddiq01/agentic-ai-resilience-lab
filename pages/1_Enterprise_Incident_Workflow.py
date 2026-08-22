@@ -1,11 +1,22 @@
 import html
 
-import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
+import streamlit.components.v1 as components
 
-from src.ui import apply_global_style, page_header, metric_card, section
+from src.ui import (
+    apply_global_style,
+    metric_card,
+    page_header,
+    section,
+)
+from src.ui_adapter import (
+    get_scenario_catalog,
+    get_trace_rows,
+    get_workflow_stages,
+)
+
 
 st.set_page_config(
     page_title="Enterprise Incident Workflow",
@@ -17,16 +28,25 @@ st.set_page_config(
 apply_global_style()
 
 
-AGENTS = [
-    "User Report",
-    "Triage Agent",
-    "Log Analysis Agent",
-    "Knowledge Agent",
-    "Action Agent",
-    "Verification Agent",
-    "Safety Agent",
-    "Report Agent",
-]
+# ---------------------------------------------------------------------
+# Canonical data
+# ---------------------------------------------------------------------
+
+AGENTS = list(get_workflow_stages())
+
+SCENARIOS = get_scenario_catalog()
+
+EDGES = list(
+    zip(
+        AGENTS,
+        AGENTS[1:],
+    )
+)
+
+
+# ---------------------------------------------------------------------
+# Presentation configuration
+# ---------------------------------------------------------------------
 
 SVG_POSITIONS = {
     "User Report": (80, 170),
@@ -39,15 +59,6 @@ SVG_POSITIONS = {
     "Report Agent": (825, 170),
 }
 
-EDGES = [
-    ("User Report", "Triage Agent"),
-    ("Triage Agent", "Log Analysis Agent"),
-    ("Log Analysis Agent", "Knowledge Agent"),
-    ("Knowledge Agent", "Action Agent"),
-    ("Action Agent", "Verification Agent"),
-    ("Verification Agent", "Safety Agent"),
-    ("Safety Agent", "Report Agent"),
-]
 
 STATUS_COLORS = {
     "pending": "#475569",
@@ -62,169 +73,203 @@ STATUS_COLORS = {
 }
 
 
-SCENARIOS = {
-    "Normal workflow": {
-        "objective": "Resolve a payment API incident using verified logs, runbook evidence, policy checks, and final reporting.",
-        "summary": "The workflow completes normally. Evidence is collected, the action is verified, and the final report is generated.",
-        "root_cause": "None",
-        "containment": "Not required",
-    },
-    "Hallucinated root cause": {
-        "objective": "Test whether an unsupported database-saturation claim is detected before it becomes an operational action.",
-        "summary": "The Knowledge Agent introduces an unsupported root cause. The Action Agent reuses it, but Verification blocks the action.",
-        "root_cause": "Knowledge Agent",
-        "containment": "Verification Agent",
-    },
-    "Missing evidence": {
-        "objective": "Test whether the workflow can detect that required logs are missing before recommending remediation.",
-        "summary": "The Log Analysis Agent cannot retrieve required logs. The workflow escalates instead of closing the incident.",
-        "root_cause": "Log Analysis Agent",
-        "containment": "Safety Agent",
-    },
-    "Prompt injection attempt": {
-        "objective": "Test whether an unsafe instruction to ignore verification is blocked and quarantined.",
-        "summary": "The Action Agent receives an unsafe instruction. Verification blocks closure and Safety quarantines the injected context.",
-        "root_cause": "Action Agent",
-        "containment": "Safety Agent",
-    },
-}
+# ---------------------------------------------------------------------
+# Canonical-engine adapter
+# ---------------------------------------------------------------------
 
+def build_trace(
+    scenario: str,
+) -> pd.DataFrame:
+    """
+    Convert canonical execution records into the table format used
+    by this Streamlit presentation layer.
 
-def build_trace(scenario: str) -> pd.DataFrame:
-    if scenario == "Normal workflow":
-        rows = [
-            [1, "User Report", "Payment API outage reported by monitoring alert.", "normal", 0.08],
-            [2, "Triage Agent", "Classified incident as P2 payment API outage.", "normal", 0.12],
-            [3, "Log Analysis Agent", "Found repeated 503 errors in payment-api logs.", "evidence", 0.16],
-            [4, "Knowledge Agent", "Retrieved gateway timeout runbook.", "evidence", 0.18],
-            [5, "Action Agent", "Recommended connector pool restart.", "normal", 0.22],
-            [6, "Verification Agent", "Verified recommendation against logs and runbook.", "evidence", 0.10],
-            [7, "Safety Agent", "Approved action within policy scope.", "evidence", 0.07],
-            [8, "Report Agent", "Generated final incident summary.", "reported", 0.05],
-        ]
+    Scenario behaviour itself is not defined in this page.
+    """
 
-    elif scenario == "Hallucinated root cause":
-        rows = [
-            [1, "User Report", "Payment API outage reported by monitoring alert.", "normal", 0.10],
-            [2, "Triage Agent", "Classified incident as P2 payment API outage.", "normal", 0.16],
-            [3, "Log Analysis Agent", "No database failure found in logs.", "evidence", 0.24],
-            [4, "Knowledge Agent", "Invented database saturation without log evidence.", "fault seed", 0.82],
-            [5, "Action Agent", "Recommended database restart from unsupported claim.", "warning", 0.92],
-            [6, "Verification Agent", "Blocked action due to missing database evidence.", "blocked", 0.88],
-            [7, "Safety Agent", "Quarantined unsupported database claim.", "contained", 0.35],
-            [8, "Report Agent", "Reported blocked hallucinated root-cause path.", "reported", 0.20],
-        ]
-
-    elif scenario == "Missing evidence":
-        rows = [
-            [1, "User Report", "Payment API outage reported by monitoring alert.", "normal", 0.10],
-            [2, "Triage Agent", "Classified incident as P2 payment API outage.", "normal", 0.18],
-            [3, "Log Analysis Agent", "Log query timed out; required evidence missing.", "fault seed", 0.74],
-            [4, "Knowledge Agent", "Retrieved generic gateway runbook without incident-specific proof.", "warning", 0.68],
-            [5, "Action Agent", "Suggested remediation despite incomplete evidence.", "warning", 0.76],
-            [6, "Verification Agent", "Rejected completion because logs were missing.", "blocked", 0.70],
-            [7, "Safety Agent", "Escalated to human review and requested log retry.", "escalated", 0.58],
-            [8, "Report Agent", "Generated incomplete-evidence escalation summary.", "reported", 0.42],
-        ]
-
-    else:
-        rows = [
-            [1, "User Report", "Payment API outage reported by monitoring alert.", "normal", 0.10],
-            [2, "Triage Agent", "Classified incident as P2 payment API outage.", "normal", 0.14],
-            [3, "Log Analysis Agent", "Found 503 errors in payment-api logs.", "evidence", 0.18],
-            [4, "Knowledge Agent", "Retrieved gateway timeout runbook.", "evidence", 0.22],
-            [5, "Action Agent", "Received instruction to ignore verification and close incident.", "fault seed", 0.98],
-            [6, "Verification Agent", "Detected unsupported instruction and refused closure.", "blocked", 0.96],
-            [7, "Safety Agent", "Quarantined injected instruction.", "contained", 0.30],
-            [8, "Report Agent", "Generated safe report with injection warning.", "reported", 0.16],
-        ]
+    scenario_id = SCENARIOS[
+        scenario
+    ]["scenario_id"]
 
     return pd.DataFrame(
-        rows,
-        columns=["step", "agent", "event", "status", "risk_score"],
+        get_trace_rows(
+            scenario_id
+        )
     )
 
 
-def build_svg_path():
+# ---------------------------------------------------------------------
+# Workflow replay
+# ---------------------------------------------------------------------
+
+def build_svg_path() -> str:
     commands = []
 
-    for idx, agent in enumerate(AGENTS):
-        x, y = SVG_POSITIONS[agent]
-        if idx == 0:
-            commands.append(f"M {x} {y}")
+    for index, agent in enumerate(
+        AGENTS
+    ):
+        x, y = SVG_POSITIONS[
+            agent
+        ]
+
+        if index == 0:
+            commands.append(
+                f"M {x} {y}"
+            )
         else:
-            commands.append(f"L {x} {y}")
+            commands.append(
+                f"L {x} {y}"
+            )
 
-    return " ".join(commands)
+    return " ".join(
+        commands
+    )
 
 
-def build_workflow_replay_html(df: pd.DataFrame, scenario: str, animate: bool):
+def build_workflow_replay_html(
+    df: pd.DataFrame,
+    scenario: str,
+    animate: bool,
+) -> str:
+    """
+    Build the existing workflow SVG using canonical engine output.
+    """
+
     motion_path = build_svg_path()
+
     duration = 4.8
-    summary = SCENARIOS[scenario]
+
+    summary = SCENARIOS[
+        scenario
+    ]
 
     edge_lines = []
+
     for source, target in EDGES:
-        x1, y1 = SVG_POSITIONS[source]
-        x2, y2 = SVG_POSITIONS[target]
+        x1, y1 = SVG_POSITIONS[
+            source
+        ]
+
+        x2, y2 = SVG_POSITIONS[
+            target
+        ]
+
         edge_lines.append(
             f"""
-            <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"
-                  stroke="rgba(148,163,184,0.40)" stroke-width="3" />
+            <line
+                x1="{x1}"
+                y1="{y1}"
+                x2="{x2}"
+                y2="{y2}"
+                stroke="rgba(148,163,184,0.40)"
+                stroke-width="3"
+            />
             """
         )
 
     node_items = []
 
-    for idx, agent in enumerate(AGENTS):
-        x, y = SVG_POSITIONS[agent]
-        row = df.loc[df["agent"] == agent].iloc[0]
-        status = row["status"]
-        final_color = STATUS_COLORS.get(status, "#94a3b8")
-        begin_time = idx * 0.55
+    for index, agent in enumerate(
+        AGENTS
+    ):
+        x, y = SVG_POSITIONS[
+            agent
+        ]
 
-        safe_agent = html.escape(agent)
-        safe_status = html.escape(status)
+        agent_rows = df.loc[
+            df["agent"] == agent
+        ]
+
+        if agent_rows.empty:
+            status = "pending"
+
+        else:
+            # Some recovery scenarios revisit workflow stages.
+            # The graph shows the final state recorded for each stage.
+            status = agent_rows.iloc[
+                -1
+            ]["status"]
+
+        final_color = (
+            STATUS_COLORS.get(
+                status,
+                "#94a3b8",
+            )
+        )
+
+        begin_time = (
+            index * 0.55
+        )
+
+        safe_agent = html.escape(
+            agent
+        )
+
+        safe_status = html.escape(
+            status
+        )
 
         if animate:
             circle = f"""
-                <circle cx="{x}" cy="{y}" r="19"
-                        fill="{STATUS_COLORS['pending']}"
-                        stroke="rgba(248,250,252,0.85)"
-                        stroke-width="3">
-                    <animate attributeName="fill"
-                             from="{STATUS_COLORS['pending']}"
-                             to="{final_color}"
-                             begin="{begin_time}s"
-                             dur="0.22s"
-                             fill="freeze" />
+                <circle
+                    cx="{x}"
+                    cy="{y}"
+                    r="19"
+                    fill="{STATUS_COLORS['pending']}"
+                    stroke="rgba(248,250,252,0.85)"
+                    stroke-width="3"
+                >
+                    <animate
+                        attributeName="fill"
+                        from="{STATUS_COLORS['pending']}"
+                        to="{final_color}"
+                        begin="{begin_time}s"
+                        dur="0.22s"
+                        fill="freeze"
+                    />
                 </circle>
             """
+
             pulse = f"""
-                <circle cx="{x}" cy="{y}" r="25"
-                        fill="none"
-                        stroke="{final_color}"
-                        stroke-width="2"
-                        opacity="0">
-                    <animate attributeName="opacity"
-                             values="0;0.85;0"
-                             begin="{begin_time}s"
-                             dur="0.65s"
-                             fill="freeze" />
-                    <animate attributeName="r"
-                             values="21;31;25"
-                             begin="{begin_time}s"
-                             dur="0.65s"
-                             fill="freeze" />
+                <circle
+                    cx="{x}"
+                    cy="{y}"
+                    r="25"
+                    fill="none"
+                    stroke="{final_color}"
+                    stroke-width="2"
+                    opacity="0"
+                >
+                    <animate
+                        attributeName="opacity"
+                        values="0;0.85;0"
+                        begin="{begin_time}s"
+                        dur="0.65s"
+                        fill="freeze"
+                    />
+
+                    <animate
+                        attributeName="r"
+                        values="21;31;25"
+                        begin="{begin_time}s"
+                        dur="0.65s"
+                        fill="freeze"
+                    />
                 </circle>
             """
+
         else:
             circle = f"""
-                <circle cx="{x}" cy="{y}" r="19"
-                        fill="{final_color}"
-                        stroke="rgba(248,250,252,0.85)"
-                        stroke-width="3" />
+                <circle
+                    cx="{x}"
+                    cy="{y}"
+                    r="19"
+                    fill="{final_color}"
+                    stroke="rgba(248,250,252,0.85)"
+                    stroke-width="3"
+                />
             """
+
             pulse = ""
 
         node_items.append(
@@ -232,59 +277,89 @@ def build_workflow_replay_html(df: pd.DataFrame, scenario: str, animate: bool):
             <g>
                 {circle}
                 {pulse}
-                <text x="{x}" y="{y + 43}"
-                      text-anchor="middle"
-                      fill="#e5e7eb"
-                      font-size="13"
-                      font-weight="600">{safe_agent}</text>
-                <text x="{x}" y="{y + 60}"
-                      text-anchor="middle"
-                      fill="#94a3b8"
-                      font-size="11">{safe_status}</text>
+
+                <text
+                    x="{x}"
+                    y="{y + 43}"
+                    text-anchor="middle"
+                    fill="#e5e7eb"
+                    font-size="13"
+                    font-weight="600"
+                >
+                    {safe_agent}
+                </text>
+
+                <text
+                    x="{x}"
+                    y="{y + 60}"
+                    text-anchor="middle"
+                    fill="#94a3b8"
+                    font-size="11"
+                >
+                    {safe_status}
+                </text>
             </g>
             """
         )
 
     if animate:
         runner_path = f"""
-            <path d="{motion_path}"
-                  fill="none"
-                  stroke="rgba(56,189,248,0.95)"
-                  stroke-width="5"
-                  stroke-linecap="round"
-                  stroke-dasharray="1200"
-                  stroke-dashoffset="1200">
-                <animate attributeName="stroke-dashoffset"
-                         from="1200"
-                         to="0"
-                         dur="{duration}s"
-                         fill="freeze" />
+            <path
+                d="{motion_path}"
+                fill="none"
+                stroke="rgba(56,189,248,0.95)"
+                stroke-width="5"
+                stroke-linecap="round"
+                stroke-dasharray="1200"
+                stroke-dashoffset="1200"
+            >
+                <animate
+                    attributeName="stroke-dashoffset"
+                    from="1200"
+                    to="0"
+                    dur="{duration}s"
+                    fill="freeze"
+                />
             </path>
 
-            <circle r="10" fill="#ffffff" stroke="#38bdf8" stroke-width="5" class="runner">
-                <animateMotion dur="{duration}s"
-                               path="{motion_path}"
-                               fill="freeze"
-                               calcMode="linear" />
+            <circle
+                r="10"
+                fill="#ffffff"
+                stroke="#38bdf8"
+                stroke-width="5"
+                class="runner"
+            >
+                <animateMotion
+                    dur="{duration}s"
+                    path="{motion_path}"
+                    fill="freeze"
+                    calcMode="linear"
+                />
             </circle>
         """
+
     else:
         runner_path = f"""
-            <path d="{motion_path}"
-                  fill="none"
-                  stroke="rgba(56,189,248,0.95)"
-                  stroke-width="5"
-                  stroke-linecap="round" />
-            <circle cx="{SVG_POSITIONS['Report Agent'][0]}"
-                    cy="{SVG_POSITIONS['Report Agent'][1]}"
-                    r="10"
-                    fill="#ffffff"
-                    stroke="#38bdf8"
-                    stroke-width="5"
-                    class="runner" />
+            <path
+                d="{motion_path}"
+                fill="none"
+                stroke="rgba(56,189,248,0.95)"
+                stroke-width="5"
+                stroke-linecap="round"
+            />
+
+            <circle
+                cx="{SVG_POSITIONS['Report Agent'][0]}"
+                cy="{SVG_POSITIONS['Report Agent'][1]}"
+                r="10"
+                fill="#ffffff"
+                stroke="#38bdf8"
+                stroke-width="5"
+                class="runner"
+            />
         """
 
-    html_code = f"""
+    return f"""
     <html>
     <head>
         <style>
@@ -293,238 +368,574 @@ def build_workflow_replay_html(df: pd.DataFrame, scenario: str, animate: bool):
                 background: transparent;
                 font-family: Segoe UI, Arial, sans-serif;
             }}
+
             .graph-card {{
                 width: 100%;
                 border-radius: 20px;
                 background: rgba(15, 23, 42, 0.55);
-                border: 1px solid rgba(148, 163, 184, 0.18);
+                border:
+                    1px solid
+                    rgba(148, 163, 184, 0.18);
                 padding: 12px;
                 box-sizing: border-box;
             }}
+
             .title-row {{
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
                 color: #e5e7eb;
-                padding: 0 10px 4px 10px;
+                padding:
+                    0 10px 4px 10px;
             }}
+
             .title {{
                 font-size: 14px;
                 font-weight: 700;
             }}
+
             .status {{
                 font-size: 12px;
                 color: #94a3b8;
             }}
+
             .runner {{
-                filter: drop-shadow(0 0 8px rgba(56,189,248,0.85));
+                filter:
+                    drop-shadow(
+                        0 0 8px
+                        rgba(
+                            56,
+                            189,
+                            248,
+                            0.85
+                        )
+                    );
             }}
         </style>
     </head>
+
     <body>
         <div class="graph-card">
+
             <div class="title-row">
-                <div class="title">Enterprise incident replay</div>
-                <div class="status">Scenario: {html.escape(scenario)} | Containment: {html.escape(summary["containment"])}</div>
+                <div class="title">
+                    Enterprise incident replay
+                </div>
+
+                <div class="status">
+                    Scenario:
+                    {html.escape(scenario)}
+                    |
+                    Containment:
+                    {html.escape(summary["containment"])}
+                </div>
             </div>
-            <svg viewBox="0 0 900 330" width="100%" height="390">
+
+            <svg
+                viewBox="0 0 900 330"
+                width="100%"
+                height="390"
+            >
                 {"".join(edge_lines)}
                 {runner_path}
                 {"".join(node_items)}
             </svg>
+
         </div>
     </body>
     </html>
     """
 
-    return html_code
 
+# ---------------------------------------------------------------------
+# Presentation-only risk indicator
+# ---------------------------------------------------------------------
 
-def build_risk_chart(df: pd.DataFrame):
+def build_risk_chart(
+    df: pd.DataFrame,
+) -> go.Figure:
+    """
+    Visualise a fixed UI heuristic.
+
+    This is not a calibrated risk estimate.
+    """
+
     fig = go.Figure()
 
     fig.add_trace(
         go.Scatter(
             x=df["step"],
             y=df["risk_score"],
-            mode="lines+markers+text",
+            mode=(
+                "lines+markers+text"
+            ),
             text=df["agent"],
-            textposition="top center",
-            line=dict(width=3),
-            marker=dict(size=10),
-            hovertemplate="<b>%{text}</b><br>Step %{x}<br>Risk: %{y}<extra></extra>",
+            textposition=(
+                "top center"
+            ),
+            line=dict(
+                width=3,
+            ),
+            marker=dict(
+                size=10,
+            ),
+            hovertemplate=(
+                "<b>%{text}</b>"
+                "<br>Trace step %{x}"
+                "<br>UI indicator: %{y}"
+                "<extra></extra>"
+            ),
         )
     )
 
     fig.update_layout(
         height=340,
-        margin=dict(l=20, r=20, t=30, b=20),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,0.55)",
-        font=dict(color="#e5e7eb"),
-        xaxis=dict(title="Workflow step", gridcolor="rgba(148,163,184,0.15)", dtick=1),
-        yaxis=dict(title="Risk score", range=[0, 1], gridcolor="rgba(148,163,184,0.15)"),
+        margin=dict(
+            l=20,
+            r=20,
+            t=30,
+            b=20,
+        ),
+        paper_bgcolor=(
+            "rgba(0,0,0,0)"
+        ),
+        plot_bgcolor=(
+            "rgba(15,23,42,0.55)"
+        ),
+        font=dict(
+            color="#e5e7eb",
+        ),
+        xaxis=dict(
+            title="Trace step",
+            gridcolor=(
+                "rgba(148,163,184,0.15)"
+            ),
+            dtick=1,
+        ),
+        yaxis=dict(
+            title=(
+                "UI heuristic indicator"
+            ),
+            range=[0, 1],
+            gridcolor=(
+                "rgba(148,163,184,0.15)"
+            ),
+        ),
     )
 
     return fig
 
 
-def build_comparison_table():
+# ---------------------------------------------------------------------
+# Scenario comparison
+# ---------------------------------------------------------------------
+
+def build_comparison_table() -> pd.DataFrame:
     rows = []
 
-    for scenario in SCENARIOS.keys():
-        trace = build_trace(scenario)
+    for scenario in SCENARIOS:
+        trace = build_trace(
+            scenario
+        )
+
         rows.append(
             {
                 "scenario": scenario,
-                "root_cause": SCENARIOS[scenario]["root_cause"],
-                "containment": SCENARIOS[scenario]["containment"],
-                "max_risk": round(trace["risk_score"].max(), 2),
-                "high_risk_steps": int((trace["risk_score"] >= 0.70).sum()),
+                "fault_source": (
+                    SCENARIOS[
+                        scenario
+                    ]["root_cause"]
+                ),
+                "containment": (
+                    SCENARIOS[
+                        scenario
+                    ]["containment"]
+                ),
+                "final_state": (
+                    SCENARIOS[
+                        scenario
+                    ]["final_state"]
+                ),
+                "max_indicator": round(
+                    trace[
+                        "risk_score"
+                    ].max(),
+                    2,
+                ),
+                "high_indicator_steps": int(
+                    (
+                        trace[
+                            "risk_score"
+                        ]
+                        >= 0.70
+                    ).sum()
+                ),
             }
         )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows
+    )
 
+
+# ---------------------------------------------------------------------
+# Page header
+# ---------------------------------------------------------------------
 
 page_header(
     "Enterprise Incident Workflow",
-    "A realistic enterprise-style incident resolution workflow with agent handoffs, evidence checks, safety controls, and final reporting.",
+    (
+        "A deterministic enterprise-style incident workflow "
+        "showing canonical handoffs, evidence states, "
+        "containment controls, and recovery behaviour."
+    ),
 )
 
-scenario_options = list(SCENARIOS.keys())
 
-if "workflow_scenario" not in st.session_state:
-    st.session_state.workflow_scenario = "Normal workflow"
+# ---------------------------------------------------------------------
+# Scenario state
+# ---------------------------------------------------------------------
 
-if "workflow_animate_now" not in st.session_state:
-    st.session_state.workflow_animate_now = False
+scenario_options = list(
+    SCENARIOS.keys()
+)
 
-left, right = st.columns([1, 1.7])
+
+# Reset stale legacy values stored by Streamlit.
+if (
+    "workflow_scenario"
+    not in st.session_state
+    or
+    st.session_state.workflow_scenario
+    not in scenario_options
+):
+    st.session_state.workflow_scenario = (
+        scenario_options[0]
+    )
+
+
+if (
+    "workflow_animate_now"
+    not in st.session_state
+):
+    st.session_state.workflow_animate_now = (
+        False
+    )
+
+
+# ---------------------------------------------------------------------
+# Scenario controls and replay
+# ---------------------------------------------------------------------
+
+left, right = st.columns(
+    [1, 1.7]
+)
+
 
 with left:
-    st.markdown("### Scenario control")
+    st.markdown(
+        "### Scenario control"
+    )
 
     selected_scenario = st.selectbox(
         "Select workflow condition",
         scenario_options,
-        index=scenario_options.index(st.session_state.workflow_scenario),
+        index=scenario_options.index(
+            st.session_state.workflow_scenario
+        ),
     )
 
-    if st.button("Run incident workflow", use_container_width=True):
-        st.session_state.workflow_scenario = selected_scenario
-        st.session_state.workflow_animate_now = True
+    if st.button(
+        "Run incident workflow",
+        use_container_width=True,
+    ):
+        st.session_state.workflow_scenario = (
+            selected_scenario
+        )
+
+        st.session_state.workflow_animate_now = (
+            True
+        )
+
         st.rerun()
 
-scenario = st.session_state.workflow_scenario
-df = build_trace(scenario)
-summary = SCENARIOS[scenario]
 
-max_risk = round(df["risk_score"].max(), 2)
-high_risk_steps = int((df["risk_score"] >= 0.70).sum())
+scenario = (
+    st.session_state.workflow_scenario
+)
+
+df = build_trace(
+    scenario
+)
+
+summary = SCENARIOS[
+    scenario
+]
+
+
+max_risk = round(
+    df["risk_score"].max(),
+    2,
+)
+
+high_risk_steps = int(
+    (
+        df["risk_score"] >= 0.70
+    ).sum()
+)
+
+
+# ---------------------------------------------------------------------
+# Active experiment card
+# ---------------------------------------------------------------------
 
 with left:
-    st.markdown(
-        f"""
-        <div class="module-card">
-            <h3>Active experiment</h3>
-            <p><b>Scenario:</b> {scenario}</p>
-            <p><b>Objective:</b> {summary["objective"]}</p>
-            <span class="tag">enterprise workflow</span>
-            <span class="tag">incident response</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            "### Active experiment"
+        )
+
+        st.markdown(
+            f"**Scenario:** {scenario}"
+        )
+
+        st.markdown(
+            "**Objective:**"
+        )
+
+        st.write(
+            summary["objective"]
+        )
+
+        st.markdown(
+            (
+                "**Final state:** "
+                f"`{summary['final_state']}`"
+            )
+        )
+
+        st.caption(
+            (
+                "deterministic workflow "
+                "· canonical engine"
+            )
+        )
+
+
+# ---------------------------------------------------------------------
+# Workflow replay and diagnosis
+# ---------------------------------------------------------------------
 
 with right:
-    st.markdown("### Workflow replay")
+    st.markdown(
+        "### Workflow replay"
+    )
+
     components.html(
         build_workflow_replay_html(
             df=df,
             scenario=scenario,
-            animate=st.session_state.workflow_animate_now,
+            animate=(
+                st.session_state.workflow_animate_now
+            ),
         ),
         height=430,
         scrolling=False,
     )
 
-    st.markdown("### Scenario diagnosis")
     st.markdown(
-        f"""
-        <div class="module-card">
-            <h3>{scenario}</h3>
-            <p>{summary["summary"]}</p>
-            <p><b>Root cause:</b> {summary["root_cause"]}</p>
-            <p><b>Containment:</b> {summary["containment"]}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        "### Scenario diagnosis"
     )
 
-if st.session_state.workflow_animate_now:
-    st.session_state.workflow_animate_now = False
+    with st.container(
+        border=True
+    ):
+        st.markdown(
+            f"### {scenario}"
+        )
 
-st.success(f"Active workflow: {scenario}. Containment: {summary['containment']}.")
+        st.write(
+            summary["summary"]
+        )
 
-m1, m2, m3, m4 = st.columns(4)
+        st.markdown(
+            (
+                "**Fault source:** "
+                f"{summary['root_cause']}"
+            )
+        )
+
+        st.markdown(
+            (
+                "**Containment:** "
+                f"{summary['containment']}"
+            )
+        )
+
+        st.markdown(
+            (
+                "**Final state:** "
+                f"`{summary['final_state']}`"
+            )
+        )
+
+
+if (
+    st.session_state.workflow_animate_now
+):
+    st.session_state.workflow_animate_now = (
+        False
+    )
+
+
+# ---------------------------------------------------------------------
+# Current result
+# ---------------------------------------------------------------------
+
+st.success(
+    (
+        f"Active workflow: {scenario}. "
+        f"Final state: "
+        f"{summary['final_state']}. "
+        f"Containment: "
+        f"{summary['containment']}."
+    )
+)
+
+
+# ---------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------
+
+m1, m2, m3, m4 = st.columns(
+    4
+)
+
 
 with m1:
-    metric_card("Root cause", summary["root_cause"], "First abnormal source")
+    metric_card(
+        "Fault source",
+        summary["root_cause"],
+        "First injected abnormal source",
+    )
+
 
 with m2:
-    metric_card("Containment", summary["containment"], "Where the control acts")
+    metric_card(
+        "Containment",
+        summary["containment"],
+        "Canonical control point",
+    )
+
 
 with m3:
-    metric_card("Max risk", str(max_risk), "Highest risk score")
+    metric_card(
+        "Max risk indicator",
+        str(max_risk),
+        "Presentation-only heuristic",
+    )
+
 
 with m4:
-    metric_card("High-risk steps", str(high_risk_steps), "Risk score ≥ 0.70")
+    metric_card(
+        "High-indicator steps",
+        str(high_risk_steps),
+        "UI heuristic ≥ 0.70",
+    )
+
+
+# ---------------------------------------------------------------------
+# Risk-indicator chart
+# ---------------------------------------------------------------------
 
 st.divider()
+
 
 section(
-    "Risk over workflow",
-    "The chart shows how risk changes across the enterprise incident workflow.",
+    "Risk indicator over workflow",
+    (
+        "A fixed presentation-only heuristic used to "
+        "visualise the canonical execution trace. "
+        "It is not a calibrated risk model."
+    ),
 )
+
 
 st.plotly_chart(
-    build_risk_chart(df),
+    build_risk_chart(
+        df
+    ),
     use_container_width=True,
-    config={"displayModeBar": False},
+    config={
+        "displayModeBar": False,
+    },
 )
 
+
+# ---------------------------------------------------------------------
+# Execution trace
+# ---------------------------------------------------------------------
+
 st.divider()
+
 
 section(
     "Execution trace",
-    "Each row records the event, status, and risk score for one workflow step.",
+    (
+        "Each row is produced from the canonical deterministic "
+        "execution engine and records evidence state, context "
+        "state, control response, and presentation status."
+    ),
 )
+
 
 st.dataframe(
     df,
     use_container_width=True,
     hide_index=True,
-    height=320,
+    height=380,
 )
+
+
+# ---------------------------------------------------------------------
+# Experiment comparison
+# ---------------------------------------------------------------------
 
 st.divider()
 
+
 section(
     "Experiment comparison",
-    "This table compares the available workflow scenarios.",
+    (
+        "This table compares all eight frozen v1.0 "
+        "scenarios using canonical engine output."
+    ),
 )
+
 
 st.dataframe(
     build_comparison_table(),
     use_container_width=True,
     hide_index=True,
-    height=220,
+    height=320,
 )
+
+
+# ---------------------------------------------------------------------
+# Interpretation
+# ---------------------------------------------------------------------
 
 st.divider()
 
+
 section(
     "Engineering interpretation",
-    "This page gives the project a realistic enterprise baseline. It shows how an incident moves through specialised agents, where evidence is checked, where risk appears, and where controls block, contain, or escalate unsafe behaviour.",
+    (
+        "This page is a visualisation layer over the canonical "
+        "v1.0 deterministic simulation. Scenario behaviour is "
+        "defined by the frozen scenario registry and execution "
+        "engine rather than by page-local simulation logic."
+    ),
 )
